@@ -1866,21 +1866,32 @@ public class Session implements Closeable {
      * Called from the timer-related code in the acceptor/initiator
      * implementations. This is not typically called from application code.
      *
+     * session.next() 一般由 QFJ Timer Processor 后台线程调用，每秒进行任务调度
+     *
      * @throws IOException IO error
      */
     public void next() throws IOException {
 
+        // 如果 enabled=false, 表示session处于不可用状态，
+        // 有可能是因为主动调用了 session.logout()
+        // 可见实际的 logout 是通过 定时调度器 去检查 enabled 这个标识位
         if (!isEnabled()) {
+            // 是不是之前成功登录过，如果是的话，就需要发送 logout message 给 counter party
             if (isLoggedOn()) {
+                // 判断是不是已经发送过 logout 了，是的话，就不重发了
                 if (!state.isLogoutSent()) {
+                    // 记录日志到日志表
                     getLog().onEvent("Initiated logout request");
+                    // 生成 logout 消息，并发送出去
                     generateLogout(state.getLogoutReason());
                 }
             } else {
                 return;
             }
         }
+        // --- 总结上边这一部分，就是对 logout 状态进行监控，并作出响应
 
+        // ?
         if (sessionSchedule != null && !sessionSchedule.isNonStopSession()) {
             // Only check the session time once per second at most. It isn't
             // necessary to do for every message received.
@@ -1904,8 +1915,11 @@ public class Session implements Closeable {
             return;
         }
 
+        // 如果没有收到 logon 的回复
         if (!state.isLogonReceived()) {
+            // 需要发送 logon 消息
             if (state.isLogonSendNeeded()) {
+                // 是否到了发送 logon 的时间，因为可能有 ReconnectInterval 的设置等
                 if (isTimeToGenerateLogon()) {
                     // ApplicationExtended can prevent the automatic login
                     if (application instanceof ApplicationExtended) {
@@ -1914,40 +1928,51 @@ public class Session implements Closeable {
                         }
                     }
                     // QFJ-926 - reset session before initiating Logon
+                    // 发送 logon 之前重置 session，需要做些判断，目前还不清楚是什么意思？
                     resetIfSessionNotCurrent(sessionID, SystemTime.currentTimeMillis());
+                    // 生成 logon 消息，并发送给 acceptor
                     if (generateLogon()) {
                         getLog().onEvent("Initiated logon request");
                     } else {
                         getLog().onErrorEvent("Error during logon request initiation");
                     }
                 }
-            } else if (state.isLogonAlreadySent() && state.isLogonTimedOut()) {
+            }
+            // logon 消息已经发送，但是 logon 超时，然后就断开连接
+            else if (state.isLogonAlreadySent() && state.isLogonTimedOut()) {
                 disconnect("Timed out waiting for logon response", true);
             }
             return;
         }
 
+        // 心跳间隔的配置
         if (state.getHeartBeatInterval() == 0) {
             return;
         }
 
+        // 判断是不是退出超时了，是的话，就直接断连接
         if (state.isLogoutTimedOut()) {
             disconnect("Timed out waiting for logout response", true);
         }
 
+        // session 超时的判断：距离上次通信的时间是不是超过了 2.4 倍的心跳间隔时间
         if (state.isTimedOut()) {
             if (!disableHeartBeatCheck) {
+                // 断开连接，并触发 状态监听
                 disconnect("Timed out waiting for heartbeat", true);
                 stateListener.onHeartBeatTimeout();
             } else {
                 LOG.warn("Heartbeat failure detected but deactivated");
             }
         } else {
+            // 先看看要不要发送 test request 消息
             if (state.isTestRequestNeeded()) {
                 generateTestRequest("TEST");
                 getLog().onEvent("Sent test request TEST");
                 stateListener.onMissedHeartBeat();
-            } else if (state.isHeartBeatNeeded()) {
+            }
+            // 再看看是不是需要发送心跳消息
+            else if (state.isHeartBeatNeeded()) {
                 generateHeartbeat();
             }
         }
