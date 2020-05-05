@@ -42,6 +42,7 @@ public final class SessionState {
     private final Lock senderMsgSeqNumLock = new ReentrantLock();
     private final Lock targetMsgSeqNumLock = new ReentrantLock();
 
+    // 用来表示是 initiator，还是 acceptor
     private final boolean initiator;
 
     private long logonTimeoutMs = 10000L;
@@ -109,9 +110,12 @@ public final class SessionState {
         }
     }
 
+    // 判断是否需要发送心跳
     public boolean isHeartBeatNeeded() {
+        // 距离上一次发送消息的时间间隔
         long millisSinceLastSentTime = SystemTime.currentTimeMillis() - getLastSentTime();
         // QFJ-448: allow 10 ms leeway since exact comparison causes skipped heartbeats occasionally
+        // 允许 10 ms 的误差, getHeartBeatMillis 就是心跳间隔的 ms 表示
         return millisSinceLastSentTime + 10 > getHeartBeatMillis() && getTestRequestCounter() == 0;
     }
 
@@ -280,7 +284,9 @@ public final class SessionState {
     }
 
     public boolean isTestRequestNeeded() {
+        // 距离上次接收到消息的时间
         long millisSinceLastReceivedTime = timeSinceLastReceivedMessage();
+        // 超过 1.5 倍的心跳时间没有收到消息，就发送测试请求
         return millisSinceLastReceivedTime >= ((1 + testRequestDelayMultiplier) * (getTestRequestCounter() + 1))
                 * getHeartBeatMillis();
     }

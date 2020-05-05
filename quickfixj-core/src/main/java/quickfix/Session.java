@@ -1945,7 +1945,7 @@ public class Session implements Closeable {
             return;
         }
 
-        // 心跳间隔的配置
+        // 心跳间隔的配置, 如果等于0，表示不发送心跳
         if (state.getHeartBeatInterval() == 0) {
             return;
         }
@@ -1955,7 +1955,7 @@ public class Session implements Closeable {
             disconnect("Timed out waiting for logout response", true);
         }
 
-        // session 超时的判断：距离上次通信的时间是不是超过了 2.4 倍的心跳间隔时间
+        // session 超时的判断：距离上次收到消息的时间是不是超过了 2.4 倍的心跳间隔时间
         if (state.isTimedOut()) {
             if (!disableHeartBeatCheck) {
                 // 断开连接，并触发 状态监听

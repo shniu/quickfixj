@@ -361,9 +361,12 @@ public abstract class SessionConnector implements Connector {
     /**
      * Delegates QFJ Timer Task to an Executor and blocks the QFJ Timer Thread until
      * the Task execution completes.
+     *
+     * 这是一个任务委托且等待任务完成的设计，非常巧妙，非常值得学习
      */
     static final class DelegatingTask implements Runnable {
 
+        // 被委托的任务
         private final BlockingSupportTask delegate;
         private final Executor executor;
 
@@ -374,16 +377,21 @@ public abstract class SessionConnector implements Connector {
 
         @Override
         public void run() {
+            // 提交给 Executor 执行器执行
             executor.execute(delegate);
             try {
+                // 等待被委托的任务执行完成，在这里等待，直到任务完成
                 delegate.await();
             } catch (InterruptedException e) {
             }
         }
 
+        // 代表一个可以支持阻塞的任务
         static final class BlockingSupportTask implements Runnable {
 
+            // 使用 latch 来做控制
             private final CountDownLatch latch = new CountDownLatch(1);
+            // 被委托的可执行任务
             private final Runnable delegate;
 
             BlockingSupportTask(Runnable delegate) {
@@ -392,18 +400,22 @@ public abstract class SessionConnector implements Connector {
 
             @Override
             public void run() {
+                // 获取当前执行任务的线程信息
                 Thread currentThread = Thread.currentThread();
                 String threadName = currentThread.getName();
                 try {
                     currentThread.setName("QFJ Timer (" + threadName + ")");
+                    // 运行被委托的任务
                     delegate.run();
                 } finally {
+                    // 任务执行完成
                     latch.countDown();
                     currentThread.setName(threadName);
                 }
             }
 
             void await() throws InterruptedException {
+                // 等待任务执行结束
                 latch.await();
             }
         }
