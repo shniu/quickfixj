@@ -108,8 +108,10 @@ public class SingleThreadedEventHandlingStrategy implements EventHandlingStrateg
                 }
             }
             try {
+                // 从队列中取数据，然后执行
                 SessionMessageEvent event = getMessage();
                 if (event != null) {
+                    // 处理消息，实际是调用 session.next(message)
                     event.processMessage();
                 }
             } catch (InterruptedException e) {

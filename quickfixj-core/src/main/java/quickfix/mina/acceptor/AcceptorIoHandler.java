@@ -60,7 +60,9 @@ class AcceptorIoHandler extends AbstractIoHandler {
     @Override
     protected void processMessage(IoSession protocolSession, Message message) throws Exception {
         Session qfSession = (Session) protocolSession.getAttribute(SessionConnector.QF_SESSION);
+        // 看是否已经建立 session
         if (qfSession == null) {
+            // Logon 请求的处理逻辑
             if (message.getHeader().getString(MsgType.FIELD).equals(MsgType.LOGON)) {
                 final SessionID sessionID = MessageUtils.getReverseSessionID(message);
                 qfSession = sessionProvider.getSession(sessionID, eventHandlingStrategy.getSessionConnector());
@@ -108,6 +110,9 @@ class AcceptorIoHandler extends AbstractIoHandler {
             }
         }
 
+        // 建立过了 Session，直接交给事件处理器处理
+        // 有  单线程实现 SingleThreadedEventHandlingStrategy
+        //     每个session一个线程两种实现
         eventHandlingStrategy.onMessage(qfSession, message);
     }
 

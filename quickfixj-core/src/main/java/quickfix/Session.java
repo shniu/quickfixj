@@ -935,7 +935,9 @@ public class Session implements Closeable {
     private void next(Message message, boolean isProcessingQueuedMessages) throws FieldNotFound, RejectLogon, IncorrectDataFormat,
             IncorrectTagValue, UnsupportedMessageType, IOException, InvalidMessage {
 
+        // 判断是不是断开连接的消息，当收到断开连接的确认后，会往队列中放入一个 END_OF_STREAM Message
         if (message == EventHandlingStrategy.END_OF_STREAM) {
+            // 执行断开连接的操作
             disconnect(ENCOUNTERED_END_OF_STREAM, false);
             return;
         }
@@ -944,6 +946,7 @@ public class Session implements Closeable {
         final String msgType = header.getString(MsgType.FIELD);
 
         // QFJ-650
+        // 如果头信息中没有中没有 MsgSeqNum Tag，就发送退出请求并断开连接
         if (!header.isSetField(MsgSeqNum.FIELD)) {
             generateLogout("Received message without MsgSeqNum");
             disconnect("Received message without MsgSeqNum: " + getMessageToLog(message), true);
@@ -972,6 +975,7 @@ public class Session implements Closeable {
                 }
             }
 
+            // 消息格式校验
             if (validateIncomingMessage && dataDictionaryProvider != null) {
                 final DataDictionary sessionDataDictionary = dataDictionaryProvider
                         .getSessionDataDictionary(beginString);
@@ -1023,6 +1027,7 @@ public class Session implements Closeable {
 
             switch (msgType) {
                 case MsgType.LOGON:
+                    // 处理登录请求
                     nextLogon(message);
                     break;
                 case MsgType.HEARTBEAT:
@@ -1193,10 +1198,12 @@ public class Session implements Closeable {
 
     /**
      * (Internal use only)
+     * 消息处理器会调用该方法
      */
     public void next(Message message) throws FieldNotFound, RejectLogon, IncorrectDataFormat,
             IncorrectTagValue, UnsupportedMessageType, IOException, InvalidMessage {
 
+        // 是否拒绝乱码消息
         if (rejectGarbledMessage && message.isGarbled()) {
             generateReject(message, "Message failed basic validity check");
             return;
@@ -1272,6 +1279,9 @@ public class Session implements Closeable {
         final int endSeqNo = resendRequest.getInt(EndSeqNo.FIELD);
         getLog().onEvent(
                 "Received ResendRequest FROM: " + beginSeqNo + " TO: " + formatEndSeqNum(endSeqNo));
+        // 重传请求，会涉及到 Gap Fill
+        //  1. 按照之前的消息传递顺序重传消息，PossDupFlag 需要设置为 Y，但是只传输业务消息，管理消息使用 GapFillMode
+        //  2. 在遇到管理消息时，需要设置 GapFillFlag 为Y，来表示对管理消息的间隙填补，PossDupFlag 同样需要设置为 Y
         manageGapFill(resendRequest, beginSeqNo, endSeqNo);
     }
 
@@ -1298,14 +1308,18 @@ public class Session implements Closeable {
         }
 
         // Just do a gap fill when messages aren't persisted
+        // 如果消息没有持久化，就直接使用间隙填补，那这样就会丢失掉一部分消息
         if (!persistMessages) {
             endSeqNo += 1;
             final int next = state.getNextSenderMsgSeqNum();
             if (endSeqNo > next) {
                 endSeqNo = next;
             }
+            // 发送 SequenceReset
+            //  GapFillFlag=Y, NewseqNo=endSeqNo, PossDupFlag=Y, MsgSeqNum=beginSeqNo
             generateSequenceReset(messageOutSync, beginSeqNo, endSeqNo);
         } else {
+            // 如果消息做了持久化，那么就可以重传消息
             resendMessages(messageOutSync, beginSeqNo, endSeqNo);
         }
         final int resendRequestMsgSeqNum = messageOutSync.getHeader().getInt(MsgSeqNum.FIELD);
@@ -1750,6 +1764,7 @@ public class Session implements Closeable {
                 return false;
             }
 
+            // 检查
             if (checkTooHigh && isTargetTooHigh(msgSeqNum)) {
                 doTargetTooHigh(msg);
                 return false;
@@ -2154,6 +2169,7 @@ public class Session implements Closeable {
             resetState();
         }
 
+        // 验证请求的合法性
         if (!verify(logon, false, validateSequenceNumbers)) {
             return;
         }
@@ -2278,11 +2294,13 @@ public class Session implements Closeable {
         }
     }
 
+    // receivedMessage 是收到的重传请求消息
     private void resendMessages(Message receivedMessage, int beginSeqNo, int endSeqNo)
             throws IOException, InvalidMessage, FieldNotFound {
 
         final ArrayList<String> messages = new ArrayList<>();
         try {
+            // 从持久化的消息中查询 beginSeqNo ~ endSeqNo 的消息
             state.get(beginSeqNo, endSeqNo, messages);
         } catch (final IOException e) {
             if (forceResendWhenCorruptedStore) {
@@ -2326,6 +2344,7 @@ public class Session implements Closeable {
             final String msgType = msg.getHeader().getString(MsgType.FIELD);
 
             if (MessageUtils.isAdminMessage(msgType) && !forceResendWhenCorruptedStore) {
+                // 如果是管理消息就忽略，然后更新begin
                 if (begin == 0) {
                     begin = msgSeqNum;
                 }
@@ -2339,7 +2358,8 @@ public class Session implements Closeable {
                     getLog().onEvent("Resending message: " + msgSeqNum);
                     // 发送需要重传的消息
                     send(msg.toString());
-                    begin = 0;
+                    begin = 0;  // 如果出现一个业务消息，就说明 GapFill 的起始序列号可以归零了，
+                                // 因为如果该业务消息是最后一个重传的消息，那就不需要 GapFill 了
                     appMessageJustSent = true;
                 } else {
                     if (begin == 0) {
@@ -2350,6 +2370,7 @@ public class Session implements Closeable {
             current = msgSeqNum + 1;
         }
 
+        // 最后如果存在间隙，就使用 SequenceReset 做 GapFill
         int newBegin = beginSeqNo;
         if (appMessageJustSent) {
             newBegin = msgSeqNum + 1;
@@ -2428,6 +2449,7 @@ public class Session implements Closeable {
         }
     }
 
+    // 收到的序列号大于期望的序列号的情况处理
     private void doTargetTooHigh(Message msg) throws FieldNotFound, IOException, InvalidMessage {
         final Message.Header header = msg.getHeader();
         final String beginString = header.getString(BeginString.FIELD);
@@ -2435,6 +2457,7 @@ public class Session implements Closeable {
         getLog().onEvent(
                 "MsgSeqNum too high, expecting " + getExpectedTargetNum() + " but received "
                         + msgSeqNum + ": " + msg);
+        // 将引起重发的消息记录下来，放入 LinkedHashMap
         enqueueMessage(msg, msgSeqNum);
 
         if (state.isResendRequested()) {
@@ -2448,6 +2471,7 @@ public class Session implements Closeable {
             }
         }
 
+        // 生成 ResendRequest
         generateResendRequest(beginString, msgSeqNum);
     }
 
