@@ -2017,10 +2017,13 @@ public class Session implements Closeable {
         logon.setInt(EncryptMethod.FIELD, 0);
         logon.setInt(HeartBtInt.FIELD, state.getHeartBeatInterval());
         if (sessionID.isFIXT()) {
+            // 设置 DefaultApplVerID 1137
             logon.setField(DefaultApplVerID.FIELD, senderDefaultApplVerID);
         }
+        // 登录时是否有必要做 refresh，还没搞懂 refresh？
         if (isStateRefreshNeeded(MsgType.LOGON)) {
             getLog().onEvent("Refreshing message/state store at logon");
+            // 主要是做缓存和db的同步等
             getStore().refresh();
             stateListener.onRefresh();
         }
@@ -2330,9 +2333,11 @@ public class Session implements Closeable {
                 initializeResendFields(msg);
                 if (resendApproved(msg)) {
                     if (begin != 0) {
+                        // 发送一个序列重置的消息，gap fill = true
                         generateSequenceReset(receivedMessage, begin, msgSeqNum);
                     }
                     getLog().onEvent("Resending message: " + msgSeqNum);
+                    // 发送需要重传的消息
                     send(msg.toString());
                     begin = 0;
                     appMessageJustSent = true;
@@ -2646,6 +2651,7 @@ public class Session implements Closeable {
             return;
         }
         try {
+            // 做状态的重置，会把序列号都重置为1，然后把 messages 里的数据擦除
             state.reset();
             stateListener.onReset();
         } finally {

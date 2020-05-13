@@ -106,15 +106,18 @@ public class SocketInitiator extends AbstractSocketInitiator {
         eventHandlingStrategy = new SingleThreadedEventHandlingStrategy(this, queueCapacity);
     }
 
+    // start() 的调用最好是保证线程安全，避免多个线程同时调用
     @Override
     public void start() throws ConfigError, RuntimeError {
         initialize();
     }
     
     private void initialize() throws ConfigError {
+        // 没有启动过就进入启动流程，这里不适合多线程同时调用 start()
         if (isStarted.equals(Boolean.FALSE)) {
             eventHandlingStrategy.setExecutor(longLivedExecutor);
             createSessionInitiators();
+            // 注册 session 到 Session 的全局映射中，sessionId -> session
             for (Session session : getSessionMap().values()) {
                 Session.registerSession(session);
             }

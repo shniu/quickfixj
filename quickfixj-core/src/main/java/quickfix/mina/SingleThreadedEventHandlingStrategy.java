@@ -129,6 +129,9 @@ public class SingleThreadedEventHandlingStrategy implements EventHandlingStrateg
      * was not successful.
      *
      * This method must not be called by several threads concurrently.
+     *
+     * 这个方法主要用来处理接收到的消息的，专门启动一个消息处理线程来处理（Message Processor Thread）
+     * 主要功能：启动消息处理线程
      */
     public void blockInThread() {
         if (messageProcessingThread != null && messageProcessingThread.isAlive()) {

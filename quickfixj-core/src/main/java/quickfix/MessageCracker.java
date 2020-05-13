@@ -32,10 +32,14 @@ import java.util.Map;
 /**
  * Helper class for delegating message types for various FIX versions to
  * type-safe onMessage methods.
+ *
+ * 将不同类型和不同版本的消息委托给具体的方法去处理
  */
 public class MessageCracker {
+    // 暂存所有注册的方法，消息类型 -> 处理方法
     private final Map<Class<?>, Invoker> invokers = new HashMap<>();
 
+    // 标记注解，用来标记不同的处理函数
     @Target({ ElementType.METHOD })
     @Retention(RetentionPolicy.RUNTIME)
     public @interface Handler {
@@ -68,9 +72,12 @@ public class MessageCracker {
         initialize(messageHandler);
     }
 
+    // 初始化，扫描消息类型和处理函数，并注册在 invokers 中
     public void initialize(Object messageHandler) {
+        // 扫描自身
         Class<?> handlerClass = messageHandler.getClass();
         for (Method method : handlerClass.getMethods()) {
+            // 是否满足 Handler 方法的条件
             if (isHandlerMethod(method)) {
                 Class<?> messageClass = method.getParameterTypes()[0];
                 method.setAccessible(true);
@@ -80,6 +87,9 @@ public class MessageCracker {
                     throw new RedundantHandlerException(messageClass, existingInvoker.getMethod(),
                             method);
                 }
+                // 注册处理函数
+                // 如：Logout -> onLogout
+                //    Logon -> onLogon
                 invokers.put(messageClass, invoker);
             }
         }
@@ -88,12 +98,15 @@ public class MessageCracker {
     private boolean isHandlerMethod(Method method) {
         int modifiers = method.getModifiers();
         Class<?>[] parameterTypes = method.getParameterTypes();
+        // 非私有方法，且 (是onMessage方法或者被 @Handler 注解), 且有两个参数，
+        // 且第一个参数继承自Message类，且第二个参数是SessionID
         return !Modifier.isPrivate(modifiers) && matchesConventionOrAnnotation(method)
                 && parameterTypes.length == 2 && Message.class.isAssignableFrom(parameterTypes[0])
                 && parameterTypes[1] == SessionID.class;
     }
 
     private boolean matchesConventionOrAnnotation(Method method) {
+        // 方法名称是 onMessage 或者被 @Handler 注解了
         return method.getName().equals("onMessage") || method.isAnnotationPresent(Handler.class);
     }
 
@@ -124,6 +137,7 @@ public class MessageCracker {
         Invoker invoker = invokers.get(message.getClass());
         if (invoker != null) {
             try {
+                // 执行方法调用
                 invoker.Invoke(message, sessionID);
             } catch (InvocationTargetException ite) {
                 try {
@@ -137,6 +151,7 @@ public class MessageCracker {
                 propagate(e);
             }
         } else {
+            // 默认使用 onMessage 处理
             onMessage(message, sessionID);
         }
     }
