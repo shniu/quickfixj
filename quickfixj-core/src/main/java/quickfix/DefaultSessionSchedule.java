@@ -37,27 +37,38 @@ public class DefaultSessionSchedule implements SessionSchedule {
     private final TimeEndPoint startTime;
     private final TimeEndPoint endTime;
     private final boolean isNonStopSession;
-    private final boolean isWeekdaySession;
+    private final boolean isWeekdaySession;  // 默认是 false
     private final int[] weekdayOffsets;
     protected static final Logger LOG = LoggerFactory.getLogger(DefaultSessionSchedule.class);
 
+    // SessionSchedule 用来跟踪当前的这个Session是否需要被重置，为什么需要 SessionSchedule ?
+    // Session 也可以不重置，一直使用, 重置的主要内容是序列号和缓存的消息
+    //  1. 如果一直不重置，可能会导致序列号一直增长，会很大，字节数多消息体大，这个原因可能不充分
+    //  2. 还有一个原因可能是应对更多可能的场景，比如有可能某些业务场景只需要每个星期的某几天的某几个时间段需要同步数据，其他时间不需要
+    //  3. 也有可能需要停机维护
+    // 比如，每日调度来更新Session状态数据；每周调度来更新Session状态数据
     public DefaultSessionSchedule(SessionSettings settings, SessionID sessionID) throws ConfigError,
             FieldConvertError {
 
+        // Session 是否永不重置，通过配置项 NonStopSession 控制
         isNonStopSession = settings.isSetting(sessionID, Session.SETTING_NON_STOP_SESSION) && settings.getBool(sessionID, Session.SETTING_NON_STOP_SESSION);
         TimeZone defaultTimeZone = getDefaultTimeZone(settings, sessionID);
+        // 在 NonStopSession 的情况下，如果需要重置 Session 就需要应用层来控制
         if (isNonStopSession) {
             isWeekdaySession = false;
             weekdayOffsets = new int[0];
             startTime = endTime = new TimeEndPoint(NOT_SET, 0, 0, 0, defaultTimeZone);
             return;
         } else {
+            // 是否配置了 Weekdays
             isWeekdaySession = settings.isSetting(sessionID, Session.SETTING_WEEKDAYS);
         }
 
         boolean startDayPresent = settings.isSetting(sessionID, Session.SETTING_START_DAY);
         boolean endDayPresent = settings.isSetting(sessionID, Session.SETTING_END_DAY);
 
+        // 设置了 Weekdays 就不要设置 StartDay and EndDay
+        // 设置了 Weekdays 后就放在 weekdayOffsets
         if (isWeekdaySession) {
             if (startDayPresent || endDayPresent )
                 throw new ConfigError("Session " + sessionID + ": usage of StartDay or EndDay is not compatible with setting " + Session.SETTING_WEEKDAYS);
@@ -66,12 +77,14 @@ public class DefaultSessionSchedule implements SessionSchedule {
             if (weekdayNames.isEmpty())
                 throw new ConfigError("Session " + sessionID + ": " + Session.SETTING_WEEKDAYS + " is empty");
 
+            // Weekdays 的配置是通过 , 分割
             String[] weekdayNameArray = weekdayNames.split(",");
             weekdayOffsets = new int[weekdayNameArray.length];
             for (int i = 0; i < weekdayNameArray.length; i++) {
                 weekdayOffsets[i] = DayConverter.toInteger(weekdayNameArray[i]);
             }
         } else {
+            // 没有设置 Weekdays，就需要保证要么同时设置 StartDay and EndDay，要么就不设置
             weekdayOffsets = new int[0];
 
             if (startDayPresent && !endDayPresent) {
@@ -82,7 +95,9 @@ public class DefaultSessionSchedule implements SessionSchedule {
                 throw new ConfigError("Session " + sessionID + ": EndDay used without StartDay");
             }
         }
+        // 起始时间点
         startTime = getTimeEndPoint(settings, sessionID, defaultTimeZone, Session.SETTING_START_TIME, Session.SETTING_START_DAY);
+        // 结束时间点
         endTime = getTimeEndPoint(settings, sessionID, defaultTimeZone, Session.SETTING_END_TIME, Session.SETTING_END_DAY);
         LOG.info("[{}] {}", sessionID, toString());
     }
@@ -91,6 +106,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
                                          TimeZone defaultTimeZone, String timeSetting, String daySetting) throws ConfigError,
             FieldConvertError {
 
+        // Time 的设置
         Matcher matcher = TIME_PATTERN.matcher(settings.getString(sessionID, timeSetting));
         if (!matcher.find()) {
             throw new ConfigError("Session " + sessionID + ": could not parse time '"
@@ -98,7 +114,9 @@ public class DefaultSessionSchedule implements SessionSchedule {
         }
 
         return new TimeEndPoint(
+                // 如果没有设置day，默认 -1
                 getDay(settings, sessionID, daySetting, NOT_SET),
+                // 时分秒
                 Integer.parseInt(matcher.group(1)), Integer.parseInt(matcher.group(2)),
                 Integer.parseInt(matcher.group(3)), getTimeZone(matcher.group(4), defaultTimeZone));
     }
@@ -123,6 +141,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
         return "".equals(tz) ? defaultZone : TimeZone.getTimeZone(tz.trim());
     }
 
+    // 时间点的抽象
     private static class TimeEndPoint {
         private final int weekDay;
         private final int hour;
@@ -185,6 +204,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
      */
     private TimeInterval theMostRecentIntervalBefore(Calendar t) {
         TimeInterval timeInterval = new TimeInterval();
+        // 取 startTime 的设置
         Calendar intervalStart = timeInterval.getStart();
         intervalStart.setTimeZone(startTime.getTimeZone());
         intervalStart.setTimeInMillis(t.getTimeInMillis());
@@ -193,6 +213,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
         intervalStart.set(Calendar.SECOND, startTime.getSecond());
         intervalStart.set(Calendar.MILLISECOND, 0);
 
+        // 取 endTime 的设置
         Calendar intervalEnd = timeInterval.getEnd();
         intervalEnd.setTimeZone(endTime.getTimeZone());
         intervalEnd.setTimeInMillis(t.getTimeInMillis());
@@ -201,6 +222,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
         intervalEnd.set(Calendar.SECOND, endTime.getSecond());
         intervalEnd.set(Calendar.MILLISECOND, 0);
 
+        // Weekday 调度 ?
         if (isWeekdaySession) {
             while (intervalStart.getTimeInMillis() > t.getTimeInMillis() ||
                     !validDayOfWeek(intervalStart)) {
@@ -237,10 +259,12 @@ public class DefaultSessionSchedule implements SessionSchedule {
         return timeInterval;
     }
 
+    // 对时间间隔的一个抽象，我们可以把时间划分为不同的间隔，包括起始和结束两个时间点
     private static class TimeInterval {
         private final Calendar start = SystemTime.getUtcCalendar();
         private final Calendar end = SystemTime.getUtcCalendar();
 
+        // 传入的时间t在start和end之间，说明属于这个间隔
         boolean isContainingTime(Calendar t) {
             return t.compareTo(start) >= 0 && t.compareTo(end) <= 0;
         }
@@ -249,6 +273,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
             return start.getTime() + " --> " + end.getTime();
         }
 
+        // 重写 equals
         public boolean equals(Object other) {
             if (this == other) {
                 return true;
@@ -257,6 +282,7 @@ public class DefaultSessionSchedule implements SessionSchedule {
                 return false;
             }
             TimeInterval otherInterval = (TimeInterval) other;
+            // 起止时间点相同，说明是同一个间隔
             return start.equals(otherInterval.start) && end.equals(otherInterval.end);
         }
 
@@ -274,15 +300,21 @@ public class DefaultSessionSchedule implements SessionSchedule {
         }
     }
 
+    // 主要用来判断是不是属于同一个 session
+    // 使用时间来判断：当前时间和session的创建时间进行比较，而且通过调度器来检查
     @Override
     public boolean isSameSession(Calendar time1, Calendar time2) {
         if (isNonStopSession())
             return true;
+        // 计算距离 time1 最近的间隔
         TimeInterval interval1 = theMostRecentIntervalBefore(time1);
+        // 如果间隔不包含time1，说明time1属于一个更新的间隔，那么time1和time2肯定不属于同一个间隔
         if (!interval1.isContainingTime(time1)) {
             return false;
         }
+        // 计算距离 time2 最近的间隔
         TimeInterval interval2 = theMostRecentIntervalBefore(time2);
+        // 如果间隔2包含time2，且间隔1和间隔2是同一个间隔，表示是同一个间隔，否则不是同一个间隔
         return interval2.isContainingTime(time2) && interval1.equals(interval2);
     }
 
@@ -294,7 +326,8 @@ public class DefaultSessionSchedule implements SessionSchedule {
     private boolean isDailySession() {
         return !isSet(startTime.getDay()) && !isSet(endTime.getDay());
     }
-    
+
+    // 现在是否处于 session 的时间窗口内 (Interval)
     @Override
     public boolean isSessionTime() {
         if(isNonStopSession()) {

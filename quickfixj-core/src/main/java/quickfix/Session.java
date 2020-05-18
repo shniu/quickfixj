@@ -512,6 +512,7 @@ public class Session implements Closeable {
 
         getLog().onEvent("Session " + sessionID + " schedule is " + sessionSchedule);
         try {
+            // 在初始化 Session 时检测 Session 需要 reset 吗 ?
             resetIfSessionNotCurrent(sessionID, SystemTime.currentTimeMillis());
         } catch (final IOException e) {
             LogUtil.logThrowable(getLog(), "error during session construction", e);
@@ -578,6 +579,7 @@ public class Session implements Closeable {
 
     private boolean isCurrentSession(final long time)
             throws IOException {
+        // time 对应的时间和 state.getCreationTime() 是否处于同一个 session 窗口中
         return sessionSchedule == null || sessionSchedule.isSameSession(
                 SystemTime.getUtcCalendar(time), SystemTime.getUtcCalendar(state.getCreationTime()));
     }
@@ -1906,7 +1908,7 @@ public class Session implements Closeable {
         }
         // --- 总结上边这一部分，就是对 logout 状态进行监控，并作出响应
 
-        // ?
+        // 检查session窗口是否失效，然后进行 session reset
         if (sessionSchedule != null && !sessionSchedule.isNonStopSession()) {
             // Only check the session time once per second at most. It isn't
             // necessary to do for every message received.
