@@ -2490,6 +2490,8 @@ public class Session implements Closeable {
         if (lastEndSeqNoSent > endSeqNo) {
             lastEndSeqNoSent = endSeqNo;
         }
+        // useClosedRangeForResend default is False
+        // 也就是说，默认情况下会给客户端发送 endSeqNo = 0，而不是 endSeqNo = lastEndSeqNoSent
         if (lastEndSeqNoSent == endSeqNo && !useClosedRangeForResend) {
             if (beginString.compareTo("FIX.4.2") >= 0) {
                 endSeqNo = 0;
@@ -2606,23 +2608,30 @@ public class Session implements Closeable {
 
             String messageString;
 
+            // 处理管理消息
             if (message.isAdmin()) {
                 try {
+                    // toAdmin 回调
                     application.toAdmin(message, sessionID);
                 } catch (final Throwable t) {
                     logApplicationException("toAdmin()", t);
                 }
 
+                // 对登录消息进行一些特殊处理
                 if (MsgType.LOGON.equals(msgType)) {
+                    // 如果还没有收到 reset 响应
                     if (!state.isResetReceived()) {
+                        // 看看发送的logon消息是否带了 ResetSeqNumFlag=Y
                         boolean resetSeqNumFlag = false;
                         if (message.isSetField(ResetSeqNumFlag.FIELD)) {
                             resetSeqNumFlag = message.getBoolean(ResetSeqNumFlag.FIELD);
                         }
+                        // 需要 reset 状态
                         if (resetSeqNumFlag) {
                             resetState();
                             message.getHeader().setInt(MsgSeqNum.FIELD, getExpectedSenderNum());
                         }
+                        // 维护reset标识
                         state.setResetSent(resetSeqNumFlag);
                     }
                 }
@@ -2633,7 +2642,7 @@ public class Session implements Closeable {
                         || MsgType.SEQUENCE_RESET.equals(msgType) || isLoggedOn()) {
                     result = send(messageString);
                 }
-            } else {
+            } else { // 处理业务消息
                 try {
                     application.toApp(message, sessionID);
                 } catch (final DoNotSend e) {
